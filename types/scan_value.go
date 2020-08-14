@@ -11,8 +11,8 @@ import (
 
 	"github.com/segmentio/encoding/json"
 
-	"github.com/go-pg/pg/v10/internal"
-	"github.com/go-pg/pg/v10/pgjson"
+	"github.com/jamscloud/pg/v10/internal"
+	"github.com/jamscloud/pg/v10/pgjson"
 )
 
 var (

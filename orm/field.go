@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/go-pg/pg/v10/types"
 	"github.com/go-pg/zerochecker"
+	"github.com/jamscloud/pg/v10/types"
 )
 
 const (

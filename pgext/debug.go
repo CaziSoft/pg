@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/go-pg/pg/v10"
+	"github.com/jamscloud/pg/v10"
 )
 
 // DebugHook is a query hook that logs the query and the error if there are any.

@@ -5,8 +5,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/go-pg/pg/v10"
-	"github.com/go-pg/pg/v10/orm"
+	"github.com/jamscloud/pg/v10"
+	"github.com/jamscloud/pg/v10/orm"
 	"go.opentelemetry.io/otel/api/global"
 	"go.opentelemetry.io/otel/api/kv"
 	"go.opentelemetry.io/otel/api/trace"
@@ -27,7 +27,7 @@ func (h OpenTelemetryHook) BeforeQuery(ctx context.Context, evt *pg.QueryEvent) 
 		return ctx, nil
 	}
 
-	ctx, _ = global.Tracer("github.com/go-pg/pg").Start(ctx, "")
+	ctx, _ = global.Tracer("github.com/jamscloud/pg").Start(ctx, "")
 	return ctx, nil
 }
 
@@ -58,7 +58,7 @@ func (h OpenTelemetryHook) AfterQuery(ctx context.Context, evt *pg.QueryEvent) e
 		query = query[:queryLimit]
 	}
 
-	fn, file, line := funcFileLine("github.com/go-pg/pg")
+	fn, file, line := funcFileLine("github.com/jamscloud/pg")
 
 	attrs := make([]kv.KeyValue, 0, 10)
 	attrs = append(attrs,

@@ -3,7 +3,7 @@ package pg_test
 import (
 	"fmt"
 
-	"github.com/go-pg/pg/v10"
+	"github.com/jamscloud/pg/v10"
 )
 
 func ExampleDB_Model_hstoreStructTag() {
