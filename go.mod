@@ -1,6 +1,6 @@
-module github.com/go-pg/pg/v10
+module github.com/jamscloud/pg/v10
 
-go 1.11
+go 1.14
 
 require (
 	github.com/go-pg/urlstruct v0.5.1
