@@ -483,7 +483,7 @@ func (q *Query) WhereOr(condition string, params ...interface{}) *Query {
 // WhereGroup encloses conditions added in the function in parentheses.
 //
 //    q.Where("TRUE").
-//    	WhereGroup(func(q *orm.Query) (*orm.Query, error) {
+//    	WhereGroup(func(q *pg.Query) (*pg.Query, error) {
 //    		q = q.WhereOr("FALSE").WhereOr("TRUE").
 //    		return q, nil
 //    	})
@@ -498,7 +498,7 @@ func (q *Query) WhereGroup(fn func(*Query) (*Query, error)) *Query {
 // WhereGroup encloses conditions added in the function in parentheses.
 //
 //    q.Where("TRUE").
-//    	WhereNotGroup(func(q *orm.Query) (*orm.Query, error) {
+//    	WhereNotGroup(func(q *pg.Query) (*pg.Query, error) {
 //    		q = q.WhereOr("FALSE").WhereOr("TRUE").
 //    		return q, nil
 //    	})
@@ -513,7 +513,7 @@ func (q *Query) WhereNotGroup(fn func(*Query) (*Query, error)) *Query {
 // WhereOrGroup encloses conditions added in the function in parentheses.
 //
 //    q.Where("TRUE").
-//    	WhereOrGroup(func(q *orm.Query) (*orm.Query, error) {
+//    	WhereOrGroup(func(q *pg.Query) (*pg.Query, error) {
 //    		q = q.Where("FALSE").Where("TRUE").
 //    		return q, nil
 //    	})
@@ -528,7 +528,7 @@ func (q *Query) WhereOrGroup(fn func(*Query) (*Query, error)) *Query {
 // WhereOrGroup encloses conditions added in the function in parentheses.
 //
 //    q.Where("TRUE").
-//    	WhereOrGroup(func(q *orm.Query) (*orm.Query, error) {
+//    	WhereOrGroup(func(q *pg.Query) (*pg.Query, error) {
 //    		q = q.Where("FALSE").Where("TRUE").
 //    		return q, nil
 //    	})
@@ -603,8 +603,9 @@ func (q *Query) WherePK() *Query {
 		q.where = append(q.where, wherePKStructQuery{q})
 		return q
 	case reflect.Slice:
-		q.joins = append(q.joins, wherePKSliceQuery{q})
-		q = q.OrderExpr(`"_pg_pk"."ordering" ASC`)
+		q.joins = append(q.joins, joinPKSliceQuery{q: q})
+		q.where = append(q.where, wherePKSliceQuery{q: q})
+		q = q.OrderExpr(`"_data"."ordering" ASC`)
 		return q
 	}
 
@@ -1187,7 +1188,9 @@ func (q *Query) Delete(values ...interface{}) (Result, error) {
 			clone = clone.Set("? = ?", table.SoftDeleteField.Column, time.Now())
 		}
 	} else {
-		clone.tableModel.setSoftDeleteField()
+		if err := clone.tableModel.setSoftDeleteField(); err != nil {
+			return nil, err
+		}
 		clone = clone.Column(table.SoftDeleteField.SQLName)
 	}
 	return clone.Update(values...)
@@ -1208,23 +1211,22 @@ func (q *Query) ForceDelete(values ...interface{}) (Result, error) {
 		return nil, err
 	}
 
-	c := q.ctx
+	ctx := q.ctx
 
 	if q.tableModel != nil {
-		c, err = q.tableModel.BeforeDelete(c)
+		ctx, err = q.tableModel.BeforeDelete(ctx)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	res, err := q.returningQuery(c, model, NewDeleteQuery(q))
+	res, err := q.returningQuery(ctx, model, NewDeleteQuery(q))
 	if err != nil {
 		return nil, err
 	}
 
 	if q.tableModel != nil {
-		err = q.tableModel.AfterDelete(c)
-		if err != nil {
+		if err := q.tableModel.AfterDelete(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -1316,7 +1318,7 @@ func (q *Query) hasExplicitTableModel() bool {
 }
 
 func (q *Query) modelHasTableName() bool {
-	return q.hasExplicitTableModel() && q.tableModel.Table().FullName != ""
+	return q.hasExplicitTableModel() && q.tableModel.Table().SQLName != ""
 }
 
 func (q *Query) modelHasTableAlias() bool {
@@ -1329,7 +1331,7 @@ func (q *Query) hasTables() bool {
 
 func (q *Query) appendFirstTable(fmter QueryFormatter, b []byte) ([]byte, error) {
 	if q.modelHasTableName() {
-		return fmter.FormatQuery(b, string(q.tableModel.Table().FullName)), nil
+		return fmter.FormatQuery(b, string(q.tableModel.Table().SQLName)), nil
 	}
 	if len(q.tables) > 0 {
 		return q.tables[0].AppendQuery(fmter, b)
@@ -1340,8 +1342,8 @@ func (q *Query) appendFirstTable(fmter QueryFormatter, b []byte) ([]byte, error)
 func (q *Query) appendFirstTableWithAlias(fmter QueryFormatter, b []byte) (_ []byte, err error) {
 	if q.modelHasTableName() {
 		table := q.tableModel.Table()
-		b = fmter.FormatQuery(b, string(table.FullName))
-		if table.Alias != table.FullName {
+		b = fmter.FormatQuery(b, string(table.SQLName))
+		if table.Alias != table.SQLName {
 			b = append(b, " AS "...)
 			b = append(b, table.Alias...)
 		}
@@ -1355,7 +1357,7 @@ func (q *Query) appendFirstTableWithAlias(fmter QueryFormatter, b []byte) (_ []b
 		}
 		if q.modelHasTableAlias() {
 			table := q.tableModel.Table()
-			if table.Alias != table.FullName {
+			if table.Alias != table.SQLName {
 				b = append(b, " AS "...)
 				b = append(b, table.Alias...)
 			}
@@ -1573,7 +1575,7 @@ func (q wherePKStructQuery) AppendQuery(fmter QueryFormatter, b []byte) ([]byte,
 func appendColumnAndValue(
 	fmter QueryFormatter, b []byte, v reflect.Value, alias types.Safe, fields []*Field,
 ) []byte {
-	isPlaceholder := isPlaceholderFormatter(fmter)
+	isPlaceholder := isTemplateFormatter(fmter)
 	for i, f := range fields {
 		if i > 0 {
 			b = append(b, " AND "...)
@@ -1597,9 +1599,37 @@ type wherePKSliceQuery struct {
 	q *Query
 }
 
-var _ QueryAppender = (*wherePKSliceQuery)(nil)
+var _ queryWithSepAppender = (*wherePKSliceQuery)(nil)
+
+func (wherePKSliceQuery) AppendSep(b []byte) []byte {
+	return append(b, " AND "...)
+}
 
 func (q wherePKSliceQuery) AppendQuery(fmter QueryFormatter, b []byte) ([]byte, error) {
+	table := q.q.tableModel.Table()
+
+	for i, f := range table.PKs {
+		if i > 0 {
+			b = append(b, " AND "...)
+		}
+		b = append(b, table.Alias...)
+		b = append(b, '.')
+		b = append(b, f.Column...)
+		b = append(b, " = "...)
+		b = append(b, `"_data".`...)
+		b = append(b, f.Column...)
+	}
+
+	return b, nil
+}
+
+type joinPKSliceQuery struct {
+	q *Query
+}
+
+var _ QueryAppender = (*joinPKSliceQuery)(nil)
+
+func (q joinPKSliceQuery) AppendQuery(fmter QueryFormatter, b []byte) ([]byte, error) {
 	table := q.q.tableModel.Table()
 	slice := q.q.tableModel.Value()
 
@@ -1618,7 +1648,13 @@ func (q wherePKSliceQuery) AppendQuery(fmter QueryFormatter, b []byte) ([]byte, 
 			if i > 0 {
 				b = append(b, ", "...)
 			}
+
 			b = f.AppendValue(b, el, 1)
+
+			if f.UserSQLType != "" {
+				b = append(b, "::"...)
+				b = append(b, f.SQLType...)
+			}
 		}
 
 		b = append(b, ", "...)
@@ -1627,31 +1663,18 @@ func (q wherePKSliceQuery) AppendQuery(fmter QueryFormatter, b []byte) ([]byte, 
 		b = append(b, ')')
 	}
 
-	b = append(b, `) AS "_pg_pk" (`...)
+	b = append(b, `) AS "_data" (`...)
 
 	for i, f := range table.PKs {
 		if i > 0 {
-			b = append(b, ",  "...)
+			b = append(b, ", "...)
 		}
 		b = append(b, f.Column...)
 	}
 
 	b = append(b, ", "...)
 	b = append(b, `"ordering"`...)
-
-	b = append(b, ") ON "...)
-
-	for i, f := range table.PKs {
-		if i > 0 {
-			b = append(b, " AND "...)
-		}
-		b = append(b, table.Alias...)
-		b = append(b, '.')
-		b = append(b, f.Column...)
-		b = append(b, " = "...)
-		b = append(b, `"_pg_pk".`...)
-		b = append(b, f.Column...)
-	}
+	b = append(b, ") ON TRUE"...)
 
 	return b, nil
 }

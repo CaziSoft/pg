@@ -16,10 +16,16 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/require"
 
 	"github.com/go-pg/pg/v10"
 	"github.com/go-pg/pg/v10/orm"
 )
+
+func init() {
+	orm.RegisterTable((*BookGenre)(nil))
+	orm.RegisterTable((*IngredientRecipe)(nil))
+}
 
 func TestGinkgo(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -88,6 +94,18 @@ func TestDBString(t *testing.T) {
 	if db.String() != wanted {
 		t.Fatalf("got %q, wanted %q", db.String(), wanted)
 	}
+}
+
+func TestDBConnectWithStartupNotice(t *testing.T) {
+	options := pgOptions()
+	// Set our application name to be too long.
+	options.ApplicationName = "i am just a really really super long application name so that i make a notice during startup"
+	db := pg.Connect(options)
+	defer db.Close()
+
+	// Upon hitting PostgreSQL we would normally receive an error if we don't handle the notice response, this will
+	// now succeed.
+	require.NoError(t, db.Ping(context.Background()), "must successfully ping database with long application name")
 }
 
 func TestOnConnect(t *testing.T) {
@@ -216,8 +234,8 @@ func TestBigColumn(t *testing.T) {
 	}
 }
 
-var _ = Describe("OnConnect error", func() {
-	It("does not panic", func() {
+var _ = Describe("OnConnect", func() {
+	It("does not panic on timeout", func() {
 		opt := pgOptions()
 		opt.OnConnect = func(ctx context.Context, conn *pg.Conn) error {
 			_, err := conn.Exec("SELECT pg_sleep(10)")
@@ -235,6 +253,23 @@ var _ = Describe("OnConnect error", func() {
 
 		_, err := db.ExecContext(ctx, "SELECT 1")
 		Expect(err).To(MatchError("ERROR #57014 canceling statement due to user request"))
+	})
+
+	It("does not panic with RunInTransaction", func() {
+		opt := pgOptions()
+		opt.OnConnect = func(ctx context.Context, conn *pg.Conn) error {
+			_, err := conn.Exec("SELECT 1")
+			return err
+		}
+
+		db := pg.Connect(opt)
+		defer db.Close()
+
+		err := db.RunInTransaction(ctx, func(tx *pg.Tx) error {
+			_, err := tx.Exec(`SELECT 1`)
+			return err
+		})
+		Expect(err).NotTo(HaveOccurred())
 	})
 })
 
@@ -777,19 +812,19 @@ var _ = Describe("DB nulls", func() {
 
 	Describe("sql.NullInt64", func() {
 		type Test struct {
-			Id    int
+			ID    int
 			Value sql.NullInt64
 		}
 
 		It("inserts null value", func() {
 			ins := &Test{
-				Id: 1,
+				ID: 1,
 			}
 			_, err := db.Model(ins).Insert(ins)
 			Expect(err).NotTo(HaveOccurred())
 
 			sel := &Test{
-				Id: 1,
+				ID: 1,
 			}
 			err = db.Model(sel).WherePK().Select()
 			Expect(err).NotTo(HaveOccurred())
@@ -798,7 +833,7 @@ var _ = Describe("DB nulls", func() {
 
 		It("inserts non-null value", func() {
 			ins := &Test{
-				Id: 1,
+				ID: 1,
 				Value: sql.NullInt64{
 					Int64: 2,
 					Valid: true,
@@ -808,7 +843,7 @@ var _ = Describe("DB nulls", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			sel := &Test{
-				Id: 1,
+				ID: 1,
 			}
 			err = db.Model(sel).WherePK().Select()
 			Expect(err).NotTo(HaveOccurred())
@@ -819,19 +854,19 @@ var _ = Describe("DB nulls", func() {
 
 	Context("nil ptr", func() {
 		type Test struct {
-			Id    int
+			ID    int
 			Value *int
 		}
 
 		It("inserts null value", func() {
 			ins := &Test{
-				Id: 1,
+				ID: 1,
 			}
 			_, err := db.Model(ins).Insert()
 			Expect(err).NotTo(HaveOccurred())
 
 			sel := &Test{
-				Id: 1,
+				ID: 1,
 			}
 			err = db.Model(sel).WherePK().Select()
 			Expect(err).NotTo(HaveOccurred())
@@ -841,14 +876,14 @@ var _ = Describe("DB nulls", func() {
 		It("inserts non-null value", func() {
 			value := 2
 			ins := &Test{
-				Id:    1,
+				ID:    1,
 				Value: &value,
 			}
 			_, err := db.Model(ins).Insert()
 			Expect(err).NotTo(HaveOccurred())
 
 			sel := &Test{
-				Id: 1,
+				ID: 1,
 			}
 			err = db.Model(sel).WherePK().Select()
 			Expect(err).NotTo(HaveOccurred())
@@ -1014,7 +1049,7 @@ var _ = Describe("errors", func() {
 
 		var test Test
 		_, err := db.QueryOne(&test, "SELECT 1 AS col1, 2 AS col2")
-		Expect(err).To(MatchError("pg: can't find column=col2 in model=Test (try discard_unknown_columns)"))
+		Expect(err).To(MatchError("pg: can't find column=col2 in model=Test (prefix the column with underscore or use discard_unknown_columns)"))
 		Expect(test.Col1).To(Equal(1))
 	})
 
@@ -1031,32 +1066,32 @@ type Genre struct {
 	// By default go-pg generates table name and alias from struct name.
 	tableName struct{} `pg:"genres,alias:genre"` // default values are the same
 
-	Id     int // Id is automatically detected as primary key
+	ID     int
 	Name   string
 	Rating int `pg:"-"` // - is used to ignore field
 
-	Books []Book `pg:"many2many:book_genres"` // many to many relation
+	Books []Book `pg:"many2many:book_genres"`
 
-	ParentId  int
-	Subgenres []Genre `pg:"fk:parent_id"`
+	ParentID  int
+	Subgenres []Genre `pg:"rel:has-many,join_fk:parent_id"`
 }
 
 func (g Genre) String() string {
-	return fmt.Sprintf("Genre<Id=%d Name=%q>", g.Id, g.Name)
+	return fmt.Sprintf("Genre<Id=%d Name=%q>", g.ID, g.Name)
 }
 
 type Image struct {
-	Id   int
+	ID   int
 	Path string
 }
 
 type Author struct {
-	ID    int     // both "Id" and "ID" are detected as primary key
+	ID    int
 	Name  string  `pg:",unique"`
-	Books []*Book // has many relation
+	Books []*Book `pg:"rel:has-many"`
 
-	AvatarId int
-	Avatar   Image
+	AvatarID int
+	Avatar   Image `pg:"rel:has-one"`
 }
 
 func (a Author) String() string {
@@ -1066,33 +1101,33 @@ func (a Author) String() string {
 type BookGenre struct {
 	tableName struct{} `pg:"alias:bg"` // custom table alias
 
-	BookId  int `pg:",pk"` // pk tag is used to mark field as primary key
-	Book    *Book
-	GenreId int `pg:",pk"`
-	Genre   *Genre
+	BookID  int    `pg:",pk"` // pk tag is used to mark field as primary key
+	Book    *Book  `pg:"rel:has-one"`
+	GenreID int    `pg:",pk"`
+	Genre   *Genre `pg:"rel:has-one"`
 
 	Genre_Rating int // belongs to and is copied to Genre model
 }
 
 type Book struct {
-	Id        int
+	ID        int
 	Title     string
 	AuthorID  int
-	Author    Author // has one relation
+	Author    Author `pg:"rel:has-one"`
 	EditorID  int
-	Editor    *Author   // has one relation
+	Editor    *Author   `pg:"rel:has-one"`
 	CreatedAt time.Time `pg:"default:now()"`
 	UpdatedAt time.Time
 
 	Genres       []Genre       `pg:"many2many:book_genres"` // many to many relation
-	Translations []Translation // has many relation
-	Comments     []Comment     `pg:"polymorphic:trackable_"` // has many polymorphic relation
+	Translations []Translation `pg:"rel:has-many"`
+	Comments     []Comment     `pg:"rel:has-many,join_fk:trackable_,polymorphic"`
 }
 
 var _ orm.BeforeInsertHook = (*Book)(nil)
 
 func (b Book) String() string {
-	return fmt.Sprintf("Book<Id=%d Title=%q>", b.Id, b.Title)
+	return fmt.Sprintf("Book<Id=%d Title=%q>", b.ID, b.Title)
 }
 
 func (b *Book) BeforeInsert(c context.Context) (context.Context, error) {
@@ -1114,16 +1149,16 @@ type BookWithCommentCount struct {
 type Translation struct {
 	tableName struct{} `pg:",alias:tr"` // custom table alias
 
-	Id     int
-	BookId int    `pg:"unique:book_id_lang"`
-	Book   *Book  // has one relation
+	ID     int
+	BookID int    `pg:"unique:book_id_lang"`
+	Book   *Book  `pg:"rel:has-one"`
 	Lang   string `pg:"unique:book_id_lang"`
 
-	Comments []Comment `pg:",polymorphic:trackable_"` // has many polymorphic relation
+	Comments []Comment `pg:"rel:has-many,join_fk:trackable_,polymorphic"`
 }
 
 type Comment struct {
-	TrackableId   int    // Book.Id or Translation.Id
+	TrackableID   int    // Book.ID or Translation.ID
 	TrackableType string // "Book" or "Translation"
 	Text          string
 }
@@ -1165,32 +1200,32 @@ var _ = Describe("ORM", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		genres := []Genre{{
-			Id:   1,
+			ID:   1,
 			Name: "genre 1",
 		}, {
-			Id:   2,
+			ID:   2,
 			Name: "genre 2",
 		}, {
-			Id:       3,
+			ID:       3,
 			Name:     "subgenre 1",
-			ParentId: 1,
+			ParentID: 1,
 		}, {
-			Id:       4,
+			ID:       4,
 			Name:     "subgenre 2",
-			ParentId: 1,
+			ParentID: 1,
 		}}
 		_, err = db.Model(&genres).Insert()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(genres).To(HaveLen(4))
 
 		images := []Image{{
-			Id:   1,
+			ID:   1,
 			Path: "/path/to/1.jpg",
 		}, {
-			Id:   2,
+			ID:   2,
 			Path: "/path/to/2.jpg",
 		}, {
-			Id:   3,
+			ID:   3,
 			Path: "/path/to/3.jpg",
 		}}
 		_, err = db.Model(&images).Insert()
@@ -1200,32 +1235,32 @@ var _ = Describe("ORM", func() {
 		authors := []Author{{
 			ID:       10,
 			Name:     "author 1",
-			AvatarId: images[0].Id,
+			AvatarID: images[0].ID,
 		}, {
 			ID:       11,
 			Name:     "author 2",
-			AvatarId: images[1].Id,
+			AvatarID: images[1].ID,
 		}, {
 			ID:       12,
 			Name:     "author 3",
-			AvatarId: images[2].Id,
+			AvatarID: images[2].ID,
 		}}
 		_, err = db.Model(&authors).Insert()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(authors).To(HaveLen(3))
 
 		books := []Book{{
-			Id:       100,
+			ID:       100,
 			Title:    "book 1",
 			AuthorID: 10,
 			EditorID: 11,
 		}, {
-			Id:       101,
+			ID:       101,
 			Title:    "book 2",
 			AuthorID: 10,
 			EditorID: 12,
 		}, {
-			Id:       102,
+			ID:       102,
 			Title:    "book 3",
 			AuthorID: 11,
 			EditorID: 11,
@@ -1238,16 +1273,16 @@ var _ = Describe("ORM", func() {
 		}
 
 		bookGenres := []BookGenre{{
-			BookId:       100,
-			GenreId:      1,
+			BookID:       100,
+			GenreID:      1,
 			Genre_Rating: 999,
 		}, {
-			BookId:       100,
-			GenreId:      2,
+			BookID:       100,
+			GenreID:      2,
 			Genre_Rating: 9999,
 		}, {
-			BookId:       101,
-			GenreId:      1,
+			BookID:       101,
+			GenreID:      1,
 			Genre_Rating: 99999,
 		}}
 		_, err = db.Model(&bookGenres).Insert()
@@ -1255,16 +1290,16 @@ var _ = Describe("ORM", func() {
 		Expect(bookGenres).To(HaveLen(3))
 
 		translations := []Translation{{
-			Id:     1000,
-			BookId: 100,
+			ID:     1000,
+			BookID: 100,
 			Lang:   "ru",
 		}, {
-			Id:     1001,
-			BookId: 100,
+			ID:     1001,
+			BookID: 100,
 			Lang:   "md",
 		}, {
-			Id:     1002,
-			BookId: 101,
+			ID:     1002,
+			BookID: 101,
 			Lang:   "ua",
 		}}
 		_, err = db.Model(&translations).Insert()
@@ -1272,15 +1307,15 @@ var _ = Describe("ORM", func() {
 		Expect(translations).To(HaveLen(3))
 
 		comments := []Comment{{
-			TrackableId:   100,
+			TrackableID:   100,
 			TrackableType: "Book",
 			Text:          "comment1",
 		}, {
-			TrackableId:   100,
+			TrackableID:   100,
 			TrackableType: "Book",
 			Text:          "comment2",
 		}, {
-			TrackableId:   1000,
+			TrackableID:   1000,
 			TrackableType: "Translation",
 			Text:          "comment3",
 		}}
@@ -1296,7 +1331,7 @@ var _ = Describe("ORM", func() {
 	Describe("relation with no results", func() {
 		It("does not panic", func() {
 			tr := new(Translation)
-			tr.Id = 123
+			tr.ID = 123
 			_, err := db.Model(tr).Insert()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1359,56 +1394,56 @@ var _ = Describe("ORM", func() {
 				Relation("Editor.Avatar").
 				Relation("Genres").
 				Relation("Comments").
-				Relation("Translations", func(q *orm.Query) (*orm.Query, error) {
+				Relation("Translations", func(q *pg.Query) (*pg.Query, error) {
 					return q.Order("id"), nil
 				}).
-				Relation("Translations.Comments", func(q *orm.Query) (*orm.Query, error) {
+				Relation("Translations.Comments", func(q *pg.Query) (*pg.Query, error) {
 					return q.Order("text"), nil
 				}).
 				First()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(book).To(Equal(&Book{
-				Id:    100,
+				ID:    100,
 				Title: "",
 				Author: Author{
 					ID:       10,
 					Name:     "author 1",
-					AvatarId: 1,
+					AvatarID: 1,
 					Avatar: Image{
-						Id:   1,
+						ID:   1,
 						Path: "/path/to/1.jpg",
 					},
 				},
 				Editor: &Author{
 					ID:       11,
 					Name:     "author 2",
-					AvatarId: 2,
+					AvatarID: 2,
 					Avatar: Image{
-						Id:   2,
+						ID:   2,
 						Path: "/path/to/2.jpg",
 					},
 				},
 				CreatedAt: time.Time{},
 				Genres: []Genre{
-					{Id: 1, Name: "genre 1", Rating: 999},
-					{Id: 2, Name: "genre 2", Rating: 9999},
+					{ID: 1, Name: "genre 1", Rating: 999},
+					{ID: 2, Name: "genre 2", Rating: 9999},
 				},
 				Translations: []Translation{{
-					Id:     1000,
-					BookId: 100,
+					ID:     1000,
+					BookID: 100,
 					Lang:   "ru",
 					Comments: []Comment{
-						{TrackableId: 1000, TrackableType: "Translation", Text: "comment3"},
+						{TrackableID: 1000, TrackableType: "Translation", Text: "comment3"},
 					},
 				}, {
-					Id:       1001,
-					BookId:   100,
+					ID:       1001,
+					BookID:   100,
 					Lang:     "md",
 					Comments: nil,
 				}},
 				Comments: []Comment{
-					{TrackableId: 100, TrackableType: "Book", Text: "comment1"},
-					{TrackableId: 100, TrackableType: "Book", Text: "comment2"},
+					{TrackableID: 100, TrackableType: "Book", Text: "comment1"},
+					{TrackableID: 100, TrackableType: "Book", Text: "comment2"},
 				},
 			}))
 		})
@@ -1426,31 +1461,31 @@ var _ = Describe("ORM", func() {
 			Expect(author).To(Equal(Author{
 				ID:       10,
 				Name:     "author 1",
-				AvatarId: 1,
+				AvatarID: 1,
 				Books: []*Book{{
-					Id:        100,
+					ID:        100,
 					Title:     "",
 					AuthorID:  10,
-					Author:    Author{ID: 10, Name: "author 1", AvatarId: 1},
+					Author:    Author{ID: 10, Name: "author 1", AvatarID: 1},
 					EditorID:  11,
-					Editor:    &Author{ID: 11, Name: "author 2", AvatarId: 2},
+					Editor:    &Author{ID: 11, Name: "author 2", AvatarID: 2},
 					CreatedAt: time.Time{},
 					Genres:    nil,
 					Translations: []Translation{
-						{Id: 1000, BookId: 100, Book: nil, Lang: "ru", Comments: nil},
-						{Id: 1001, BookId: 100, Book: nil, Lang: "md", Comments: nil},
+						{ID: 1000, BookID: 100, Book: nil, Lang: "ru", Comments: nil},
+						{ID: 1001, BookID: 100, Book: nil, Lang: "md", Comments: nil},
 					},
 				}, {
-					Id:        101,
+					ID:        101,
 					Title:     "",
 					AuthorID:  10,
-					Author:    Author{ID: 10, Name: "author 1", AvatarId: 1},
+					Author:    Author{ID: 10, Name: "author 1", AvatarID: 1},
 					EditorID:  12,
-					Editor:    &Author{ID: 12, Name: "author 3", AvatarId: 3},
+					Editor:    &Author{ID: 12, Name: "author 3", AvatarID: 3},
 					CreatedAt: time.Time{},
 					Genres:    nil,
 					Translations: []Translation{
-						{Id: 1002, BookId: 101, Book: nil, Lang: "ua", Comments: nil},
+						{ID: 1002, BookID: 101, Book: nil, Lang: "ua", Comments: nil},
 					},
 				}},
 			}))
@@ -1465,22 +1500,22 @@ var _ = Describe("ORM", func() {
 				First()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(genre).To(Equal(Genre{
-				Id:     1,
+				ID:     1,
 				Name:   "genre 1",
 				Rating: 0,
 				Books: []Book{{
-					Id: 100,
+					ID: 100,
 					Translations: []Translation{
-						{Id: 1000, BookId: 100, Book: nil, Lang: "ru", Comments: nil},
-						{Id: 1001, BookId: 100, Book: nil, Lang: "md", Comments: nil},
+						{ID: 1000, BookID: 100, Book: nil, Lang: "ru", Comments: nil},
+						{ID: 1001, BookID: 100, Book: nil, Lang: "md", Comments: nil},
 					},
 				}, {
-					Id: 101,
+					ID: 101,
 					Translations: []Translation{
-						{Id: 1002, BookId: 101, Book: nil, Lang: "ua", Comments: nil},
+						{ID: 1002, BookID: 101, Book: nil, Lang: "ua", Comments: nil},
 					},
 				}},
-				ParentId:  0,
+				ParentID:  0,
 				Subgenres: nil,
 			}))
 		})
@@ -1495,12 +1530,12 @@ var _ = Describe("ORM", func() {
 				First()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(translation).To(Equal(Translation{
-				Id:     1000,
-				BookId: 100,
+				ID:     1000,
+				BookID: 100,
 				Book: &Book{
-					Id:     100,
-					Author: Author{ID: 10, Name: "author 1", AvatarId: 1},
-					Editor: &Author{ID: 11, Name: "author 2", AvatarId: 2},
+					ID:     100,
+					Author: Author{ID: 10, Name: "author 1", AvatarID: 1},
+					Editor: &Author{ID: 11, Name: "author 2", AvatarID: 2},
 				},
 				Lang: "ru",
 			}))
@@ -1531,11 +1566,11 @@ var _ = Describe("ORM", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(book).To(Equal(&BookWithCommentCount{
 				Book: Book{
-					Id:     100,
-					Author: Author{ID: 10, Name: "author 1", AvatarId: 1},
+					ID:     100,
+					Author: Author{ID: 10, Name: "author 1", AvatarID: 1},
 					Genres: []Genre{
-						{Id: 1, Name: "genre 1", Rating: 999},
-						{Id: 2, Name: "genre 2", Rating: 9999},
+						{ID: 1, Name: "genre 1", Rating: 999},
+						{ID: 2, Name: "genre 2", Rating: 9999},
 					},
 				},
 				CommentCount: 2,
@@ -1560,15 +1595,15 @@ var _ = Describe("ORM", func() {
 				Select()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(books).To(Equal([]Book{{
-				Id:       100,
+				ID:       100,
 				Title:    "",
 				AuthorID: 0,
 				Author: Author{
 					ID:       10,
 					Name:     "author 1",
-					AvatarId: 1,
+					AvatarID: 1,
 					Avatar: Image{
-						Id:   1,
+						ID:   1,
 						Path: "/path/to/1.jpg",
 					},
 				},
@@ -1576,43 +1611,43 @@ var _ = Describe("ORM", func() {
 				Editor: &Author{
 					ID:       11,
 					Name:     "author 2",
-					AvatarId: 2,
+					AvatarID: 2,
 					Avatar: Image{
-						Id:   2,
+						ID:   2,
 						Path: "/path/to/2.jpg",
 					},
 				},
 				Genres: []Genre{
-					{Id: 1, Name: "genre 1", Rating: 999},
-					{Id: 2, Name: "genre 2", Rating: 9999},
+					{ID: 1, Name: "genre 1", Rating: 999},
+					{ID: 2, Name: "genre 2", Rating: 9999},
 				},
 				Translations: []Translation{{
-					Id:     1000,
-					BookId: 100,
+					ID:     1000,
+					BookID: 100,
 					Lang:   "ru",
 					Comments: []Comment{
-						{TrackableId: 1000, TrackableType: "Translation", Text: "comment3"},
+						{TrackableID: 1000, TrackableType: "Translation", Text: "comment3"},
 					},
 				}, {
-					Id:       1001,
-					BookId:   100,
+					ID:       1001,
+					BookID:   100,
 					Lang:     "md",
 					Comments: nil,
 				}},
 				Comments: []Comment{
-					{TrackableId: 100, TrackableType: "Book", Text: "comment1"},
-					{TrackableId: 100, TrackableType: "Book", Text: "comment2"},
+					{TrackableID: 100, TrackableType: "Book", Text: "comment1"},
+					{TrackableID: 100, TrackableType: "Book", Text: "comment2"},
 				},
 			}, {
-				Id:       101,
+				ID:       101,
 				Title:    "",
 				AuthorID: 0,
 				Author: Author{
 					ID:       10,
 					Name:     "author 1",
-					AvatarId: 1,
+					AvatarID: 1,
 					Avatar: Image{
-						Id:   1,
+						ID:   1,
 						Path: "/path/to/1.jpg",
 					},
 				},
@@ -1620,28 +1655,28 @@ var _ = Describe("ORM", func() {
 				Editor: &Author{
 					ID:       12,
 					Name:     "author 3",
-					AvatarId: 3,
+					AvatarID: 3,
 					Avatar: Image{
-						Id:   3,
+						ID:   3,
 						Path: "/path/to/3.jpg",
 					},
 				},
 				Genres: []Genre{
-					{Id: 1, Name: "genre 1", Rating: 99999},
+					{ID: 1, Name: "genre 1", Rating: 99999},
 				},
 				Translations: []Translation{
-					{Id: 1002, BookId: 101, Lang: "ua"},
+					{ID: 1002, BookID: 101, Lang: "ua"},
 				},
 			}, {
-				Id:       102,
+				ID:       102,
 				Title:    "",
 				AuthorID: 0,
 				Author: Author{
 					ID:       11,
 					Name:     "author 2",
-					AvatarId: 2,
+					AvatarID: 2,
 					Avatar: Image{
-						Id:   2,
+						ID:   2,
 						Path: "/path/to/2.jpg",
 					},
 				},
@@ -1649,9 +1684,9 @@ var _ = Describe("ORM", func() {
 				Editor: &Author{
 					ID:       11,
 					Name:     "author 2",
-					AvatarId: 2,
+					AvatarID: 2,
 					Avatar: Image{
-						Id:   2,
+						ID:   2,
 						Path: "/path/to/2.jpg",
 					},
 				},
@@ -1671,38 +1706,38 @@ var _ = Describe("ORM", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(genres).To(Equal([]Genre{
 				{
-					Id:     1,
+					ID:     1,
 					Name:   "genre 1",
 					Rating: 0,
 					Books: []Book{{
-						Id: 100,
+						ID: 100,
 						Translations: []Translation{
-							{Id: 1000, BookId: 100, Book: nil, Lang: "ru", Comments: nil},
-							{Id: 1001, BookId: 100, Book: nil, Lang: "md", Comments: nil},
+							{ID: 1000, BookID: 100, Book: nil, Lang: "ru", Comments: nil},
+							{ID: 1001, BookID: 100, Book: nil, Lang: "md", Comments: nil},
 						},
 					}, {
-						Id: 101,
+						ID: 101,
 						Translations: []Translation{
-							{Id: 1002, BookId: 101, Book: nil, Lang: "ua", Comments: nil},
+							{ID: 1002, BookID: 101, Book: nil, Lang: "ua", Comments: nil},
 						},
 					}},
-					ParentId: 0,
+					ParentID: 0,
 					Subgenres: []Genre{
-						{Id: 3, Name: "subgenre 1", Rating: 0, Books: nil, ParentId: 1, Subgenres: nil},
-						{Id: 4, Name: "subgenre 2", Rating: 0, Books: nil, ParentId: 1, Subgenres: nil},
+						{ID: 3, Name: "subgenre 1", Rating: 0, Books: nil, ParentID: 1, Subgenres: nil},
+						{ID: 4, Name: "subgenre 2", Rating: 0, Books: nil, ParentID: 1, Subgenres: nil},
 					},
 				}, {
-					Id:     2,
+					ID:     2,
 					Name:   "genre 2",
 					Rating: 0,
 					Books: []Book{{
-						Id: 100,
+						ID: 100,
 						Translations: []Translation{
-							{Id: 1000, BookId: 100, Book: nil, Lang: "ru", Comments: nil},
-							{Id: 1001, BookId: 100, Book: nil, Lang: "md", Comments: nil},
+							{ID: 1000, BookID: 100, Book: nil, Lang: "ru", Comments: nil},
+							{ID: 1001, BookID: 100, Book: nil, Lang: "md", Comments: nil},
 						},
 					}},
-					ParentId:  0,
+					ParentID:  0,
 					Subgenres: nil,
 				},
 			}))
@@ -1718,30 +1753,30 @@ var _ = Describe("ORM", func() {
 				Select()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(translations).To(Equal([]Translation{{
-				Id:     1000,
-				BookId: 100,
+				ID:     1000,
+				BookID: 100,
 				Book: &Book{
-					Id:     100,
-					Author: Author{ID: 10, Name: "author 1", AvatarId: 1},
-					Editor: &Author{ID: 11, Name: "author 2", AvatarId: 2},
+					ID:     100,
+					Author: Author{ID: 10, Name: "author 1", AvatarID: 1},
+					Editor: &Author{ID: 11, Name: "author 2", AvatarID: 2},
 				},
 				Lang: "ru",
 			}, {
-				Id:     1001,
-				BookId: 100,
+				ID:     1001,
+				BookID: 100,
 				Book: &Book{
-					Id:     100,
-					Author: Author{ID: 10, Name: "author 1", AvatarId: 1},
-					Editor: &Author{ID: 11, Name: "author 2", AvatarId: 2},
+					ID:     100,
+					Author: Author{ID: 10, Name: "author 1", AvatarID: 1},
+					Editor: &Author{ID: 11, Name: "author 2", AvatarID: 2},
 				},
 				Lang: "md",
 			}, {
-				Id:     1002,
-				BookId: 101,
+				ID:     1002,
+				BookID: 101,
 				Book: &Book{
-					Id:     101,
-					Author: Author{ID: 10, Name: "author 1", AvatarId: 1},
-					Editor: &Author{ID: 12, Name: "author 3", AvatarId: 3},
+					ID:     101,
+					Author: Author{ID: 10, Name: "author 1", AvatarID: 1},
+					Editor: &Author{ID: 12, Name: "author 3", AvatarID: 3},
 				},
 				Lang: "ua",
 			}}))
@@ -1772,30 +1807,43 @@ var _ = Describe("ORM", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(books).To(Equal([]BookWithCommentCount{{
 				Book: Book{
-					Id:     100,
-					Author: Author{ID: 10, Name: "author 1", AvatarId: 1},
+					ID:     100,
+					Author: Author{ID: 10, Name: "author 1", AvatarID: 1},
 					Genres: []Genre{
-						{Id: 1, Name: "genre 1", Rating: 999},
-						{Id: 2, Name: "genre 2", Rating: 9999},
+						{ID: 1, Name: "genre 1", Rating: 999},
+						{ID: 2, Name: "genre 2", Rating: 9999},
 					},
 				},
 				CommentCount: 2,
 			}, {
 				Book: Book{
-					Id:     101,
-					Author: Author{ID: 10, Name: "author 1", AvatarId: 1},
+					ID:     101,
+					Author: Author{ID: 10, Name: "author 1", AvatarID: 1},
 					Genres: []Genre{
-						{Id: 1, Name: "genre 1", Rating: 99999},
+						{ID: 1, Name: "genre 1", Rating: 99999},
 					},
 				},
 				CommentCount: 0,
 			}, {
 				Book: Book{
-					Id:     102,
-					Author: Author{ID: 11, Name: "author 2", AvatarId: 2},
+					ID:     102,
+					Author: Author{ID: 11, Name: "author 2", AvatarID: 2},
 				},
 				CommentCount: 0,
 			}}))
+		})
+
+		It("supports WherePK", func() {
+			books := []Book{
+				{ID: 101},
+				{ID: 100},
+			}
+			err := db.Model(&books).Column("title").WherePK().Select()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(books).To(Equal([]Book{
+				{ID: 101, Title: "book 2"},
+				{ID: 100, Title: "book 1"},
+			}))
 		})
 	})
 
@@ -1875,10 +1923,10 @@ var _ = Describe("ORM", func() {
 
 		It("inserts books", func() {
 			books := []Image{{
-				Id:   111,
+				ID:   111,
 				Path: "111.jpg",
 			}, {
-				Id:   222,
+				ID:   222,
 				Path: "222.jpg",
 			}}
 			_, err := db.Model(&books).Insert()
@@ -1918,10 +1966,10 @@ var _ = Describe("ORM", func() {
 
 		It("updates books using Set expression", func() {
 			books := []Book{{
-				Id:    100,
+				ID:    100,
 				Title: " suffix",
 			}, {
-				Id: 101,
+				ID: 101,
 			}}
 			res, err := db.Model(&books).
 				Set("title = book.title || COALESCE(_data.title, '')").
@@ -1934,13 +1982,13 @@ var _ = Describe("ORM", func() {
 			err = db.Model(&books).Column("id", "title").Order("id").Select()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(books).To(Equal([]Book{{
-				Id:    100,
+				ID:    100,
 				Title: "book 1 suffix",
 			}, {
-				Id:    101,
+				ID:    101,
 				Title: "book 2",
 			}, {
-				Id:    102,
+				ID:    102,
 				Title: "book 3",
 			}}))
 		})
@@ -2016,9 +2064,9 @@ var _ = Describe("ORM", func() {
 			Select()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(books).To(Equal([]Book{{
-			Id: 100,
+			ID: 100,
 		}, {
-			Id: 101,
+			ID: 101,
 		}}))
 	})
 
@@ -2026,15 +2074,15 @@ var _ = Describe("ORM", func() {
 		var book Book
 		err := db.Model(&book).
 			Column("book.id").
-			Relation("Translations", func(q *orm.Query) (*orm.Query, error) {
+			Relation("Translations", func(q *pg.Query) (*pg.Query, error) {
 				return q.Where("lang = 'ru'"), nil
 			}).
 			First()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(book).To(Equal(Book{
-			Id: 100,
+			ID: 100,
 			Translations: []Translation{
-				{Id: 1000, BookId: 100, Lang: "ru"},
+				{ID: 1000, BookID: 100, Lang: "ru"},
 			},
 		}))
 	})
@@ -2043,28 +2091,28 @@ var _ = Describe("ORM", func() {
 		var book Book
 		err := db.Model(&book).
 			Column("book.id").
-			Relation("Genres", func(q *orm.Query) (*orm.Query, error) {
+			Relation("Genres", func(q *pg.Query) (*pg.Query, error) {
 				return q.Where("genre__rating > 999"), nil
 			}).
 			First()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(book).To(Equal(Book{
-			Id: 100,
+			ID: 100,
 			Genres: []Genre{
-				{Id: 2, Name: "genre 2", Rating: 9999},
+				{ID: 2, Name: "genre 2", Rating: 9999},
 			},
 		}))
 	})
 
 	It("deletes book returning title", func() {
 		book := &Book{
-			Id: 100,
+			ID: 100,
 		}
 		res, err := db.Model(book).WherePK().Returning("title").Delete()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.RowsAffected()).To(Equal(1))
 		Expect(book).To(Equal(&Book{
-			Id:    100,
+			ID:    100,
 			Title: "book 1",
 		}))
 	})
@@ -2094,8 +2142,16 @@ var _ = Describe("ORM", func() {
 		book := new(Book)
 		err = db.Model(book).
 			Relation("Editor").
-			Where("book.id = ?", newBook.Id).
+			Where("book.id = ?", newBook.ID).
 			Select()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(book.Editor).To(BeNil())
+
+		book = new(Book)
+		err = db.Model(book).
+			Relation("Editor").
+			Where("book.id = ?", newBook.ID).
+			Select(book)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(book.Editor).To(BeNil())
 	})
@@ -2164,7 +2220,7 @@ var _ = Describe("ORM", func() {
 			var count int
 			err = q.ForEach(func(id int, title string) error {
 				book := &books[count]
-				Expect(id).To(Equal(book.Id))
+				Expect(id).To(Equal(book.ID))
 				Expect(title).To(Equal(book.Title))
 				count++
 				return nil
@@ -2212,7 +2268,7 @@ var _ = Describe("ORM", func() {
 })
 
 type SoftDeleteWithTimeModel struct {
-	Id        int
+	ID        int
 	DeletedAt time.Time `pg:",soft_delete"`
 }
 
@@ -2248,7 +2304,7 @@ var _ = Describe("soft delete with time column", func() {
 			model := new(SoftDeleteWithTimeModel)
 			err := db.Model(model).Deleted().Select()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(model.Id).To(Equal(1))
+			Expect(model.ID).To(Equal(1))
 			Expect(model.DeletedAt).To(BeTemporally("~", time.Now(), 3*time.Second))
 
 			n, err := db.Model((*SoftDeleteWithTimeModel)(nil)).Deleted().Count()
@@ -2259,7 +2315,7 @@ var _ = Describe("soft delete with time column", func() {
 		Describe("ForceDelete", func() {
 			BeforeEach(func() {
 				model := &SoftDeleteWithTimeModel{
-					Id: 1,
+					ID: 1,
 				}
 				_, err := db.Model(model).WherePK().ForceDelete()
 				Expect(err).NotTo(HaveOccurred())
@@ -2280,7 +2336,7 @@ var _ = Describe("soft delete with time column", func() {
 	Describe("nil model", func() {
 		BeforeEach(func() {
 			model := &SoftDeleteWithTimeModel{
-				Id: 1,
+				ID: 1,
 			}
 			_, err := db.Model(model).Insert()
 			Expect(err).NotTo(HaveOccurred())
@@ -2295,7 +2351,7 @@ var _ = Describe("soft delete with time column", func() {
 	Describe("model", func() {
 		BeforeEach(func() {
 			model := &SoftDeleteWithTimeModel{
-				Id: 1,
+				ID: 1,
 			}
 			_, err := db.Model(model).Insert()
 			Expect(err).NotTo(HaveOccurred())
@@ -2310,7 +2366,7 @@ var _ = Describe("soft delete with time column", func() {
 })
 
 type SoftDeleteWithIntModel struct {
-	Id        int
+	ID        int
 	DeletedAt *int64 `pg:",soft_delete"`
 }
 
@@ -2346,7 +2402,7 @@ var _ = Describe("soft delete with int column", func() {
 			model := new(SoftDeleteWithIntModel)
 			err := db.Model(model).Deleted().Select()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(model.Id).To(Equal(1))
+			Expect(model.ID).To(Equal(1))
 			deletedTime := time.Unix(0, *model.DeletedAt)
 			Expect(deletedTime).To(BeTemporally("~", time.Now(), time.Second))
 
@@ -2358,7 +2414,7 @@ var _ = Describe("soft delete with int column", func() {
 		Describe("ForceDelete", func() {
 			BeforeEach(func() {
 				model := &SoftDeleteWithIntModel{
-					Id: 1,
+					ID: 1,
 				}
 				_, err := db.Model(model).WherePK().ForceDelete()
 				Expect(err).NotTo(HaveOccurred())
@@ -2379,7 +2435,7 @@ var _ = Describe("soft delete with int column", func() {
 	Describe("nil model", func() {
 		BeforeEach(func() {
 			model := &SoftDeleteWithIntModel{
-				Id: 1,
+				ID: 1,
 			}
 			_, err := db.Model(model).Insert()
 			Expect(err).NotTo(HaveOccurred())
@@ -2394,7 +2450,7 @@ var _ = Describe("soft delete with int column", func() {
 	Describe("model", func() {
 		BeforeEach(func() {
 			model := &SoftDeleteWithIntModel{
-				Id: 1,
+				ID: 1,
 			}
 			_, err := db.Model(model).Insert()
 			Expect(err).NotTo(HaveOccurred())
@@ -2408,3 +2464,127 @@ var _ = Describe("soft delete with int column", func() {
 		assert()
 	})
 })
+
+type Recipe struct {
+	tableName   struct{} `pg:"?tenant.recipes"`
+	Id          int
+	Ingredients []*Ingredient `pg:"many2many:?tenant.ingredients_recipes"`
+}
+
+type Ingredient struct {
+	tableName struct{} `pg:"?tenant.ingredients"`
+	Id        int
+	Recipes   []*Recipe `pg:"many2many:?tenant.ingredients_recipes"`
+}
+
+type IngredientRecipe struct {
+	tableName    struct{}    `pg:"?tenant.ingredients_recipes"`
+	Recipe       *Recipe     `pg:"rel:has-one"`
+	RecipeId     int         `pg:",pk"`
+	Ingredient   *Ingredient `pg:"rel:has-one"`
+	IngredientId int         `pg:",pk"`
+}
+
+var _ = Describe("many2many multi-tenant bug", func() {
+	var db *pg.DB
+
+	BeforeEach(func() {
+		db = testDB().WithParam("tenant", pg.Safe("public"))
+		options := orm.CreateTableOptions{}
+
+		err := db.Model((*Recipe)(nil)).CreateTable(&options)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = db.Model((*Ingredient)(nil)).CreateTable(&options)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = db.Model((*IngredientRecipe)(nil)).CreateTable(&options)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		err := db.Model((*Recipe)(nil)).DropTable(nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = db.Model((*Ingredient)(nil)).DropTable(nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = db.Model((*IngredientRecipe)(nil)).DropTable(nil)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("should find the many2many table", func() {
+		recipe := Recipe{Id: 1}
+		ingredient := Ingredient{Id: 1}
+		ingredientRecipe := IngredientRecipe{
+			RecipeId:     1,
+			IngredientId: 1,
+		}
+
+		_, err := db.Model(&recipe).Insert()
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = db.Model(&ingredient).Insert()
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = db.Model(&ingredientRecipe).Insert()
+		Expect(err).NotTo(HaveOccurred())
+
+		err = db.Model(&recipe).WherePK().Relation("Ingredients").Select()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(recipe.Ingredients).To(HaveLen(1))
+		Expect(recipe.Ingredients[0].Id).To(Equal(1))
+	})
+})
+
+func TestColumnReuse(t *testing.T) {
+	db := testDB()
+
+	err := createSchema(db)
+	panicIf(err)
+
+	user1 := &User{
+		Name:   "admin",
+		Emails: []string{"admin1@admin", "admin2@admin"},
+	}
+	err = CreateUser(db, user1)
+	panicIf(err)
+
+	err = CreateUser(db, &User{
+		Name:   "root",
+		Emails: []string{"root1@root", "root2@root"},
+	})
+	panicIf(err)
+
+	story1 := &Story{
+		Title:    "Cool story",
+		AuthorId: user1.Id,
+	}
+	err = CreateStory(db, story1)
+	panicIf(err)
+
+	users := []map[string]interface{}{}
+	stories := []map[string]interface{}{}
+
+	ctx := context.Background()
+	_, err = db.QueryContext(ctx, &users, `SELECT * FROM users`)
+	panicIf(err)
+
+	_, err = db.QueryContext(ctx, &stories, `SELECT * FROM stories`)
+	panicIf(err)
+
+	for _, user := range users {
+		ks := []string{}
+		for k, _ := range user {
+			ks = append(ks, k)
+		}
+		require.ElementsMatch(t, []string{"name", "id", "emails"}, ks)
+	}
+	for _, story := range stories {
+		ks := []string{}
+		for k, _ := range story {
+			ks = append(ks, k)
+		}
+		require.ElementsMatch(t, []string{"id", "title", "author_id"}, ks)
+	}
+}

@@ -70,10 +70,10 @@ func (f *Field) Value(strct reflect.Value) reflect.Value {
 }
 
 func (f *Field) HasZeroValue(strct reflect.Value) bool {
-	return f.hasZeroField(strct, f.Index)
+	return f.hasZeroValue(strct, f.Index)
 }
 
-func (f *Field) hasZeroField(v reflect.Value, index []int) bool {
+func (f *Field) hasZeroValue(v reflect.Value, index []int) bool {
 	for _, idx := range index {
 		if v.Kind() == reflect.Ptr {
 			if v.IsNil() {
@@ -106,10 +106,21 @@ func (f *Field) AppendValue(b []byte, strct reflect.Value, quote int) []byte {
 }
 
 func (f *Field) ScanValue(strct reflect.Value, rd types.Reader, n int) error {
-	fv := f.Value(strct)
 	if f.scan == nil {
-		return fmt.Errorf("pg: ScanValue(unsupported %s)", fv.Type())
+		return fmt.Errorf("pg: ScanValue(unsupported %s)", f.Type)
 	}
+
+	var fv reflect.Value
+	if n == -1 {
+		var ok bool
+		fv, ok = fieldByIndex(strct, f.Index)
+		if !ok {
+			return nil
+		}
+	} else {
+		fv = fieldByIndexAlloc(strct, f.Index)
+	}
+
 	return f.scan(fv, rd, n)
 }
 

@@ -3,7 +3,6 @@ package pg
 import (
 	"context"
 	"io"
-	"log"
 	"strconv"
 
 	"github.com/go-pg/pg/v10/internal"
@@ -17,16 +16,6 @@ var Discard orm.Discard
 // NullTime is a time.Time wrapper that marshals zero time as JSON null and
 // PostgreSQL NULL.
 type NullTime = types.NullTime
-
-// Model returns new query for the optional model.
-func Model(model ...interface{}) *orm.Query {
-	return orm.NewQuery(nil, model...)
-}
-
-// ModelContext returns a new query for the optional model with a context.
-func ModelContext(c context.Context, model ...interface{}) *orm.Query {
-	return orm.NewQueryContext(c, nil, model...)
-}
 
 // Scan returns ColumnScanner that copies the columns in the
 // row into the values.
@@ -91,9 +80,49 @@ func Hstore(v interface{}) *types.Hstore {
 }
 
 // SetLogger sets the logger to the given one.
-func SetLogger(logger *log.Logger) {
+func SetLogger(logger internal.Logging) {
 	internal.Logger = logger
 }
+
+//------------------------------------------------------------------------------
+
+type Query = orm.Query
+
+// Model returns a new query for the optional model.
+func Model(model ...interface{}) *Query {
+	return orm.NewQuery(nil, model...)
+}
+
+// ModelContext returns a new query for the optional model with a context.
+func ModelContext(c context.Context, model ...interface{}) *Query {
+	return orm.NewQueryContext(c, nil, model...)
+}
+
+// DBI is a DB interface implemented by *DB and *Tx.
+type DBI interface {
+	Model(model ...interface{}) *Query
+	ModelContext(c context.Context, model ...interface{}) *Query
+
+	Exec(query interface{}, params ...interface{}) (Result, error)
+	ExecContext(c context.Context, query interface{}, params ...interface{}) (Result, error)
+	ExecOne(query interface{}, params ...interface{}) (Result, error)
+	ExecOneContext(c context.Context, query interface{}, params ...interface{}) (Result, error)
+	Query(model, query interface{}, params ...interface{}) (Result, error)
+	QueryContext(c context.Context, model, query interface{}, params ...interface{}) (Result, error)
+	QueryOne(model, query interface{}, params ...interface{}) (Result, error)
+	QueryOneContext(c context.Context, model, query interface{}, params ...interface{}) (Result, error)
+
+	Begin() (*Tx, error)
+	RunInTransaction(ctx context.Context, fn func(*Tx) error) error
+
+	CopyFrom(r io.Reader, query interface{}, params ...interface{}) (Result, error)
+	CopyTo(w io.Writer, query interface{}, params ...interface{}) (Result, error)
+}
+
+var (
+	_ DBI = (*DB)(nil)
+	_ DBI = (*Tx)(nil)
+)
 
 //------------------------------------------------------------------------------
 
@@ -124,7 +153,7 @@ func (Strings) AddColumnScanner(_ orm.ColumnScanner) error {
 }
 
 // ScanColumn scans the columns and appends them to `strings`.
-func (strings *Strings) ScanColumn(colIdx int, _ string, rd types.Reader, n int) error {
+func (strings *Strings) ScanColumn(col types.ColumnInfo, rd types.Reader, n int) error {
 	b := make([]byte, n)
 	_, err := io.ReadFull(rd, b)
 	if err != nil {
@@ -178,7 +207,7 @@ func (Ints) AddColumnScanner(_ orm.ColumnScanner) error {
 }
 
 // ScanColumn scans the columns and appends them to `ints`.
-func (ints *Ints) ScanColumn(colIdx int, colName string, rd types.Reader, n int) error {
+func (ints *Ints) ScanColumn(col types.ColumnInfo, rd types.Reader, n int) error {
 	num, err := types.ScanInt64(rd, n)
 	if err != nil {
 		return err
@@ -228,7 +257,7 @@ func (IntSet) AddColumnScanner(_ orm.ColumnScanner) error {
 }
 
 // ScanColumn scans the columns and appends them to `IntSet`.
-func (set *IntSet) ScanColumn(colIdx int, colName string, rd types.Reader, n int) error {
+func (set *IntSet) ScanColumn(col types.ColumnInfo, rd types.Reader, n int) error {
 	num, err := types.ScanInt64(rd, n)
 	if err != nil {
 		return err

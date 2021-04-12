@@ -9,7 +9,7 @@ import (
 )
 
 func benchmarkPoolGetPut(b *testing.B, poolSize int) {
-	c := context.Background()
+	ctx := context.Background()
 	connPool := pool.NewConnPool(&pool.Options{
 		Dialer:             dummyDialer,
 		PoolSize:           poolSize,
@@ -22,11 +22,11 @@ func benchmarkPoolGetPut(b *testing.B, poolSize int) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			cn, err := connPool.Get(c)
+			cn, err := connPool.Get(ctx)
 			if err != nil {
 				b.Fatal(err)
 			}
-			connPool.Put(cn)
+			connPool.Put(ctx, cn)
 		}
 	})
 }
@@ -44,7 +44,7 @@ func BenchmarkPoolGetPut1000Conns(b *testing.B) {
 }
 
 func benchmarkPoolGetRemove(b *testing.B, poolSize int) {
-	c := context.Background()
+	ctx := context.Background()
 	connPool := pool.NewConnPool(&pool.Options{
 		Dialer:             dummyDialer,
 		PoolSize:           poolSize,
@@ -57,11 +57,11 @@ func benchmarkPoolGetRemove(b *testing.B, poolSize int) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			cn, err := connPool.Get(c)
+			cn, err := connPool.Get(ctx)
 			if err != nil {
 				b.Fatal(err)
 			}
-			connPool.Remove(cn, nil)
+			connPool.Remove(ctx, cn, nil)
 		}
 	})
 }
@@ -76,4 +76,29 @@ func BenchmarkPoolGetRemove100Conns(b *testing.B) {
 
 func BenchmarkPoolGetRemove1000Conns(b *testing.B) {
 	benchmarkPoolGetRemove(b, 1000)
+}
+
+var columns = [][]byte{
+	[]byte("id"),
+	[]byte("business_phone"),
+	[]byte("display_name"),
+	[]byte("given_name"),
+	[]byte("job_title"),
+	[]byte("mail"),
+	[]byte("mobile_phone"),
+	[]byte("office_location"),
+	[]byte("preferred_language"),
+	[]byte("surname"),
+	[]byte("user_principal_name"),
+}
+
+func BenchmarkColumnAlloc(b *testing.B) {
+	columnAlloc := pool.NewColumnAlloc()
+	for i := 0; i < b.N; i++ {
+		for i, column := range columns {
+			columnAlloc.New(int16(i), column)
+		}
+		columnAlloc.Columns()
+		columnAlloc.Reset()
+	}
 }
