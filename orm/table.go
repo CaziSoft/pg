@@ -605,6 +605,22 @@ func (t *Table) mustHasOneRelation(field *Field, pgTag *tagparser.Tag) bool {
 	if err := joinTable.checkPKs(); err != nil {
 		panic(err)
 	}
+
+	joinFKs := joinTable.PKs
+
+	joinFkPrefix, joinFkOK := pgTag.Options["join_fk"]
+	if joinFkOK {
+		joinFk := joinTable.getField(joinFkPrefix)
+		if joinFk == nil {
+			panic(fmt.Errorf(
+				"pg: %s has one-to %s: %s must have column %s "+
+					"(use join_fk:custom_column tag on %s field to specify custom column)",
+				field.GoName, t.TypeName, joinTable.TypeName, joinFkPrefix, field.GoName,
+			))
+		}
+		joinFKs = []*Field{joinFk}
+	}
+
 	fkPrefix, fkOK := pgTag.Options["fk"]
 
 	if fkOK && len(joinTable.PKs) == 1 {
@@ -622,7 +638,7 @@ func (t *Table) mustHasOneRelation(field *Field, pgTag *tagparser.Tag) bool {
 			Field:     field,
 			JoinTable: joinTable,
 			BaseFKs:   []*Field{fk},
-			JoinFKs:   joinTable.PKs,
+			JoinFKs:   joinFKs,
 		})
 		return true
 	}
