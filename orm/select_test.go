@@ -1,11 +1,14 @@
 package orm
 
 import (
+	"testing"
 	"time"
 
-	"github.com/go-pg/pg/v10/types"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/require"
+
+	"github.com/go-pg/pg/v10/types"
 )
 
 type User struct {
@@ -236,12 +239,51 @@ var _ = Describe("Select", func() {
 		Expect(s).To(Equal(`SELECT * WHERE (id IN ('foo','bar'))`))
 	})
 
+	It("supports WhereInOr", func() {
+		q := NewQuery(nil).
+			WhereIn("id IN (?)", []string{"foo", "bar"}).
+			WhereInOr("name IN (?)", []string{"foo", "bar"})
+
+		s := selectQueryString(q)
+		Expect(s).To(Equal(`SELECT * WHERE (id IN ('foo','bar')) OR (name IN ('foo','bar'))`))
+	})
+
 	It("supports Where & pg.In", func() {
 		q := NewQuery(nil).
 			Where("id IN (?)", types.In([]string{"foo", "bar"}))
 
 		s := selectQueryString(q)
 		Expect(s).To(Equal(`SELECT * WHERE (id IN ('foo','bar'))`))
+	})
+
+	It("supports WherePK", func() {
+		type Item struct {
+			ID   uint64 `pg:"type:bigint"`
+			Text string
+		}
+		items := []Item{
+			{2, "two"},
+			{1, "one"},
+		}
+
+		q := NewQuery(nil, &items).WherePK()
+		s := selectQueryString(q)
+		Expect(s).To(Equal(`SELECT "item"."id", "item"."text" FROM "items" AS "item" JOIN (VALUES (2::bigint, 0), (1::bigint, 1)) AS "_data" ("id", "ordering") ON TRUE WHERE "item"."id" = "_data"."id" ORDER BY "_data"."ordering" ASC`))
+	})
+
+	It("omits columns", func() {
+		var members []struct {
+			ID    uint64
+			Group struct{ ID uint64 } `pg:"rel:has-one"`
+			User  struct{ ID uint64 } `pg:"rel:has-one"`
+		}
+
+		q := NewQuery(nil, &members).
+			Relation("User._").
+			Relation("Group.id").
+			Column("_")
+		s := selectQueryString(q)
+		Expect(s).To(Equal(`SELECT "group"."id" AS "group__id" LEFT JOIN  AS "user" ON "user"."id" = ."id" LEFT JOIN  AS "group" ON "group"."id" = ."id"`))
 	})
 })
 
@@ -467,9 +509,32 @@ func selectQueryString(q *Query) string {
 	return s
 }
 
-func queryString(f QueryAppender) string {
-	fmter := NewFormatter().WithModel(f)
-	b, err := f.AppendQuery(fmter, nil)
+func queryString(model QueryAppender) string {
+	fmter := NewFormatter().WithModel(model)
+	b, err := model.AppendQuery(fmter, nil)
 	Expect(err).NotTo(HaveOccurred())
 	return string(b)
+}
+
+func TestLongSelectFormatter(t *testing.T) {
+	type Model struct {
+		A1  int
+		A2  int
+		A3  int
+		A4  int
+		A5  int
+		A6  int
+		A7  int
+		A8  int
+		A9  int
+		A10 int
+		A11 int
+	}
+
+	q := NewQuery(nil, &Model{})
+	sel := NewSelectQuery(q)
+
+	b, err := sel.AppendTemplate(nil)
+	require.NoError(t, err)
+	require.Equal(t, `SELECT "model"."11 columns" FROM "models" AS "model"`, string(b))
 }

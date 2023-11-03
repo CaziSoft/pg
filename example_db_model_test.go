@@ -21,7 +21,7 @@ type Story struct {
 	Id       int64
 	Title    string
 	AuthorId int64
-	Author   *User
+	Author   *User `pg:"rel:has-one"`
 }
 
 func (s Story) String() string {
@@ -30,7 +30,8 @@ func (s Story) String() string {
 
 func ExampleDB_Model() {
 	db := pg.Connect(&pg.Options{
-		User: "postgres",
+		User:     "postgres",
+		Password: "postgres",
 	})
 	defer db.Close()
 

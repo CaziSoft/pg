@@ -2,7 +2,6 @@ package pool_test
 
 import (
 	"context"
-
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
@@ -10,20 +9,17 @@ import (
 )
 
 var _ = Describe("SingleConnPool", func() {
-	var p *pool.SingleConnPool
+	It("remove a conn due to context is cancelled", func() {
+		p := pool.NewSingleConnPool(nil, &pool.Conn{})
+		ctx, cancel := context.WithCancel(context.TODO())
+		cn, err := p.Get(nil)
+		Expect(err).To(BeNil())
+		Expect(cn).ToNot(BeNil())
 
-	BeforeEach(func() {
-		p = pool.NewSingleConnPool(nil)
-	})
-
-	It("closes the pool", func() {
-		err := p.Close()
-		Expect(err).NotTo(HaveOccurred())
-
-		_, err = p.Get(context.Background())
-		Expect(err).To(Equal(pool.ErrClosed))
-
-		err = p.Close()
-		Expect(err).To(Equal(pool.ErrClosed))
+		cancel()
+		p.Remove(ctx, cn, nil)
+		cn, err = p.Get(nil)
+		Expect(cn).To(BeNil())
+		Expect(err).ToNot(BeNil())
 	})
 })

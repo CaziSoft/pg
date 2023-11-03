@@ -20,13 +20,13 @@ var (
 func init() {
 	pgdb = connect()
 
-	err := pgdb.Model((*Flight)(nil)).DropTable(&orm.DropTableOptions{
+	err := pgdb.Model((*Video)(nil)).DropTable(&orm.DropTableOptions{
 		IfExists: true,
 		Cascade:  true,
 	})
 	panicIf(err)
 
-	err = pgdb.Model((*Flight)(nil)).CreateTable(nil)
+	err = pgdb.Model((*Video)(nil)).CreateTable(&orm.CreateTableOptions{})
 	panicIf(err)
 }
 
@@ -43,7 +43,7 @@ func panicIf(err error) {
 func ExampleConnect() {
 	db := pg.Connect(&pg.Options{
 		User:     "postgres",
-		Password: "",
+		Password: "postgres",
 		Database: "postgres",
 	})
 	defer db.Close()
@@ -110,12 +110,13 @@ func ExampleListener() {
 
 	notif := <-ch
 	fmt.Println(notif)
-	// Output: &{mychan hello world}
+	// Output: {mychan hello world}
 }
 
 func txExample() *pg.DB {
 	db := pg.Connect(&pg.Options{
-		User: "postgres",
+		User:     "postgres",
+		Password: "postgres",
 	})
 
 	queries := []string{
@@ -182,7 +183,7 @@ func ExampleDB_RunInTransaction() {
 
 	incrInTx := func(db *pg.DB) error {
 		// Transaction is automatically rolled back on error.
-		return db.RunInTransaction(func(tx *pg.Tx) error {
+		return db.RunInTransaction(ctx, func(tx *pg.Tx) error {
 			var counter int
 			_, err := tx.QueryOne(
 				pg.Scan(&counter), `SELECT counter FROM tx_test FOR UPDATE`)
@@ -226,7 +227,7 @@ func ExampleDB_Prepare() {
 	// Output: foo bar
 }
 
-func ExampleDB_CreateTable() {
+func ExampleDB_Model_createTable() {
 	type Model1 struct {
 		Id int
 	}
@@ -235,8 +236,8 @@ func ExampleDB_CreateTable() {
 		Id   int
 		Name string
 
-		Model1Id int `pg:"on_delete:RESTRICT, on_update: CASCADE"`
-		Model1   *Model1
+		Model1Id int     `pg:"on_delete:RESTRICT,on_update: CASCADE"`
+		Model1   *Model1 `pg:"rel:has-one"`
 	}
 
 	for _, model := range []interface{}{&Model1{}, &Model2{}} {
@@ -313,20 +314,20 @@ func ExampleScan() {
 }
 
 func ExampleError() {
-	flight := &Flight{
+	video := &Video{
 		Id: 123,
 	}
-	_, err := pgdb.Model(flight).Insert()
+	_, err := pgdb.Model(video).Insert()
 	panicIf(err)
 
-	_, err = pgdb.Model(flight).Insert()
+	_, err = pgdb.Model(video).Insert()
 	if err != nil {
 		pgErr, ok := err.(pg.Error)
 		if ok && pgErr.IntegrityViolation() {
-			fmt.Println("flight already exists:", err)
-		} else {
+			fmt.Println("video already exists:", err)
+		} else if pgErr.Field('S') == "PANIC" {
 			panic(err)
 		}
 	}
-	// Output: flight already exists: ERROR #23505 duplicate key value violates unique constraint "flights_pkey"
+	// Output: video already exists: ERROR #23505 duplicate key value violates unique constraint "videos_pkey"
 }

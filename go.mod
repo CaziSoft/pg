@@ -3,23 +3,21 @@ module github.com/go-pg/pg/v10
 go 1.11
 
 require (
-	github.com/go-pg/urlstruct v0.5.1
+	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-pg/zerochecker v0.2.0
+	github.com/golang/protobuf v1.4.3 // indirect
+	github.com/google/go-cmp v0.5.5 // indirect
 	github.com/jinzhu/inflection v1.0.0
-	github.com/onsi/ginkgo v1.10.1
-	github.com/onsi/gomega v1.7.0
-	github.com/segmentio/encoding v0.1.14
-	github.com/stretchr/testify v1.6.1
+	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
+	github.com/onsi/ginkgo v1.14.2
+	github.com/onsi/gomega v1.10.3
+	github.com/stretchr/testify v1.7.0
 	github.com/tmthrgd/go-hex v0.0.0-20190904060850-447a3041c3bc
 	github.com/vmihailenco/bufpool v0.1.11
-	github.com/vmihailenco/msgpack/v5 v5.0.0-beta.1
-	github.com/vmihailenco/tagparser v0.1.1
-	go.opentelemetry.io/otel v0.10.0
-	golang.org/x/crypto v0.0.0-20200728195943-123391ffb6de // indirect
-	golang.org/x/exp v0.0.0-20200513190911-00229845015e
-	golang.org/x/net v0.0.0-20200707034311-ab3426394381 // indirect
-	golang.org/x/sys v0.0.0-20200810151505-1b9f1253b3ed // indirect
-	google.golang.org/grpc v1.31.0
-	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15
-	mellium.im/sasl v0.2.1
+	github.com/vmihailenco/msgpack/v5 v5.3.4
+	github.com/vmihailenco/tagparser v0.1.2
+	golang.org/x/crypto v0.1.0 // indirect
+	google.golang.org/protobuf v1.25.0 // indirect
+	gopkg.in/check.v1 v1.0.0-20200227125254-8fa46927fb4f
+	mellium.im/sasl v0.3.1
 )

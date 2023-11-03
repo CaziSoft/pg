@@ -13,9 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"go.opentelemetry.io/otel/api/trace"
-
-	"github.com/go-pg/pg/v10/internal"
 	"github.com/go-pg/pg/v10/internal/pool"
 )
 
@@ -261,13 +258,7 @@ func ParseURL(sURL string) (*Options, error) {
 
 func (opt *Options) getDialer() func(context.Context) (net.Conn, error) {
 	return func(ctx context.Context) (net.Conn, error) {
-		var conn net.Conn
-		err := internal.WithSpan(ctx, "dialer", func(ctx context.Context, span trace.Span) error {
-			var err error
-			conn, err = opt.Dialer(ctx, opt.Network, opt.Addr)
-			return err
-		})
-		return conn, err
+		return opt.Dialer(ctx, opt.Network, opt.Addr)
 	}
 }
 
